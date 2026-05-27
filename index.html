@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Retro RPG Project</title>
+    <style>
+        body {
+            background-color: #111;
+            color: white;
+            font-family: monospace;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            overflow: hidden;
+        }
+        #gameCanvas {
+            border: 4px solid #fff;
+            background-color: #000;
+            image-rendering: pixelated; /* Keeps sprites crisp */
+        }
+    </style>
+</head>
+<body>
+    <!-- 256x224 is the classic NES resolution, or upscale cleanly -->
+    <canvas id="gameCanvas" width="512" height="448"></canvas>
+    <script src="game.js"></script>
+</body>
+</html>

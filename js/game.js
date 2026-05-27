@@ -2,10 +2,16 @@ const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 
 const TILE_SIZE = 32; 
-let gameState = "OVERWORLD"; 
 
-// --- Combat Menu Selection Cursor ---
-let combatSelection = 0; // 0 = Fight, 1 = Run
+// --- Engine State Machine ---
+// States: TITLE_SCREEN, LOAD_PROMPT, OVERWORLD, BATTLE, BATTLE_VICTORY, GAME_OVER
+let gameState = "TITLE_SCREEN"; 
+
+// --- Menu Indexes ---
+let menuSelection = 0;   // 0 = New Game, 1 = Continue (Title/Load screen)
+let combatSelection = 0; // 0 = Fight, 1 = Run (Combat screen)
+
+// --- Game Message Logs ---
 let battleLog = "";
 let currentMonster = null;
 
@@ -25,6 +31,7 @@ const monsters = [
     { name: "SPIDER", hp: 8, maxHp: 8, attack: 6, defense: 0, speed: 6, goldReward: 10 }
 ];
 
+// --- Simple 2D Map Array ---
 const map = [
     [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
     [1,0,0,0,0,0,1,0,0,0,0,0,0,0,0,1],
@@ -33,9 +40,122 @@ const map = [
     [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
 ];
 
-// --- Input Handling & State Routers ---
+// --- Save & Load Logic Functions ---
+function saveGame() {
+    try {
+        localStorage.setItem("another_memory_save", JSON.stringify(player));
+        alert("Game Progress Saved Systematically!");
+    } catch (error) {
+        console.error("Could not write save data to browser memory", error);
+    }
+}
+
+function loadGame() {
+    const savedData = localStorage.getItem("another_memory_save");
+    if (savedData) {
+        player = JSON.parse(savedData);
+        gameState = "OVERWORLD";
+    } else {
+        alert("No save data discovered! Starting fresh initialization.");
+        startNewGame();
+    }
+}
+
+function startNewGame() {
+    player = { x: 4, y: 4, level: 1, hp: 30, maxHp: 30, attack: 8, defense: 2, speed: 5, gold: 40 };
+    gameState = "OVERWORLD";
+}
+
+// --- Dynamic Encounter Generator ---
+function checkRandomEncounter() {
+    if (Math.random() < 0.15) { // 15% random chance per movement step
+        const randomMonsterTemplate = monsters[Math.floor(Math.random() * monsters.length)];
+        currentMonster = { ...randomMonsterTemplate }; 
+        gameState = "BATTLE";
+        combatSelection = 0;
+        battleLog = `An enemy ${currentMonster.name} ambushed you!`;
+    }
+}
+
+// --- Turn-Based Battle Resolution ---
+function executeCombatRound() {
+    if (combatSelection === 1) { // Player attempts to run away
+        if (Math.random() > 0.4) { // 60% escape rate success
+            battleLog = "Escaped safely!";
+            gameState = "BATTLE_VICTORY";
+            currentMonster.goldReward = 0; // Fleeing voids rewards
+            return;
+        } else {
+            battleLog = "Can't escape! The monster blocks your path.";
+            monsterTurn();
+            if (player.hp <= 0) gameState = "GAME_OVER";
+            return;
+        }
+    }
+
+    // Determine Turn Order Strategy (Speed Initiative)
+    if (player.speed >= currentMonster.speed) {
+        playerTurn();
+        if (currentMonster.hp > 0) {
+            monsterTurn();
+        }
+    } else {
+        monsterTurn();
+        if (player.hp > 0) {
+            playerTurn();
+        }
+    }
+
+    // Post-Round State Assessment
+    if (player.hp <= 0) {
+        gameState = "GAME_OVER";
+    } else if (currentMonster.hp <= 0) {
+        gameState = "BATTLE_VICTORY";
+        player.gold += currentMonster.goldReward;
+        battleLog = `Defeated ${currentMonster.name}! Found ${currentMonster.goldReward} Gold!`;
+    }
+}
+
+function playerTurn() {
+    let damage = Math.max(1, player.attack - currentMonster.defense + Math.floor(Math.random() * 3));
+    currentMonster.hp -= damage;
+    battleLog = `You strike ${currentMonster.name} for ${damage} damage.`;
+}
+
+function monsterTurn() {
+    let damage = Math.max(1, currentMonster.attack - player.defense + Math.floor(Math.random() * 2));
+    player.hp -= damage;
+    battleLog = `The ${currentMonster.name} attacks! Deals ${damage} damage.`;
+}
+
+// --- Global Input Processing System ---
 window.addEventListener("keydown", (e) => {
-    if (gameState === "OVERWORLD") {
+    
+    if (gameState === "TITLE_SCREEN") {
+        if (e.key === "Enter") {
+            if (localStorage.getItem("another_memory_save")) {
+                gameState = "LOAD_PROMPT";
+                menuSelection = 1; // Default to 'Continue' if file exists
+            } else {
+                startNewGame();
+            }
+        }
+    } 
+    
+    else if (gameState === "LOAD_PROMPT") {
+        if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+            menuSelection = menuSelection === 0 ? 1 : 0;
+        }
+        if (e.key === "Enter") {
+            if (menuSelection === 1) {
+                loadGame();
+            } else {
+                startNewGame();
+            }
+        }
+    } 
+    
+    else if (gameState === "OVERWORLD") {
         let targetX = player.x;
         let targetY = player.y;
 
@@ -51,11 +171,16 @@ window.addEventListener("keydown", (e) => {
                 checkRandomEncounter();
             }
         }
+
+        // Quick Hotkey Save Functionality
+        if (e.key.toLowerCase() === "s") {
+            saveGame();
+        }
     } 
     
     else if (gameState === "BATTLE") {
         if (e.key === "ArrowUp" || e.key === "ArrowDown") {
-            combatSelection = combatSelection === 0 ? 1 : 0; // Toggle between Fight (0) and Run (1)
+            combatSelection = combatSelection === 0 ? 1 : 0;
         }
         if (e.key === "Enter") {
             executeCombatRound();
@@ -64,93 +189,75 @@ window.addEventListener("keydown", (e) => {
     
     else if (gameState === "BATTLE_VICTORY") {
         if (e.key === "Enter") {
-            gameState = "OVERWORLD"; // Return to map exploration
+            gameState = "OVERWORLD";
         }
     } 
     
     else if (gameState === "GAME_OVER") {
         if (e.key === "Enter") {
-            // Hard reset on death
-            player.hp = player.maxHp;
-            player.x = 4; player.y = 4;
-            gameState = "OVERWORLD";
+            startNewGame(); // Reset variables and send back to overworld map
         }
     }
 });
 
-// --- Encounter Generator ---
-function checkRandomEncounter() {
-    if (Math.random() < 0.15) { // 15% encounter rate per movement step
-        const randomMonsterTemplate = monsters[Math.floor(Math.random() * monsters.length)];
-        // Deep copy the object template so we don't mutate the base database values
-        currentMonster = { ...randomMonsterTemplate }; 
-        gameState = "BATTLE";
-        combatSelection = 0;
-        battleLog = `An enemy ${currentMonster.name} ambushed you!`;
-    }
-}
-
-// --- Dynamic Round Resolution Machine ---
-function executeCombatRound() {
-    if (combatSelection === 1) { // Player chooses to Attempt Escape
-        if (Math.random() > 0.4) { // 60% escape rate success threshold
-            battleLog = "Escaped safely!";
-            gameState = "BATTLE_VICTORY";
-            currentMonster.goldReward = 0; // Zero gains for fleeing
-            return;
-        } else {
-            battleLog = "Can't escape! The monster blocks your path.";
-            monsterTurn();
-            return;
-        }
-    }
-
-    // Sort turns based on basic speed stat initiative rules
-    if (player.speed >= currentMonster.speed) {
-        playerTurn();
-        if (currentMonster.hp > 0) monsterTurn();
-    } else {
-        monsterTurn();
-        if (player.hp > 0) playerTurn();
-    }
-
-    // Check Win/Loss conditions at the end of turn executions
-    if (player.hp <= 0) {
-        gameState = "GAME_OVER";
-    } else if (currentMonster.hp <= 0) {
-        gameState = "BATTLE_VICTORY";
-        player.gold += currentMonster.goldReward;
-        battleLog = `Defeated ${currentMonster.name}! Found ${currentMonster.goldReward} Gold!`;
-    }
-}
-
-function playerTurn() {
-    // Formula: Raw Attack minus target Defense (minimum floor value of 1 damage points)
-    let damage = Math.max(1, player.attack - currentMonster.defense + Math.floor(Math.random() * 3));
-    currentMonster.hp -= damage;
-    battleLog = `You strike ${currentMonster.name} for ${damage} damage.`;
-}
-
-function monsterTurn() {
-    let damage = Math.max(1, currentMonster.attack - player.defense + Math.floor(Math.random() * 2));
-    player.hp -= damage;
-    battleLog = `The ${currentMonster.name} attacks! Deals ${damage} damage.`;
-}
-
-// --- Rendering Loop Graphics Interface ---
+// --- Graphical Rendering Pipeline ---
 function gameLoop() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    if (gameState === "OVERWORLD") {
+    if (gameState === "TITLE_SCREEN") {
+        drawTitleScreen();
+    } else if (gameState === "LOAD_PROMPT") {
+        drawLoadPromptScreen();
+    } else if (gameState === "OVERWORLD") {
         drawMap();
         drawPlayer();
         drawOverworldUI();
     } else {
-        // Draw combat wrapper menus for BATTLE, BATTLE_VICTORY, and GAME_OVER
+        // Battle layout screen handles states: BATTLE, BATTLE_VICTORY, GAME_OVER
         drawBattleScreen();
     }
 
     requestAnimationFrame(gameLoop);
+}
+
+// --- Drawing UI Modules ---
+
+function drawTitleScreen() {
+    ctx.fillStyle = "#000055"; // Classic Blue Window Style
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = "#FFFFFF";
+    ctx.lineWidth = 4;
+    ctx.strokeRect(15, 15, canvas.width - 30, canvas.height - 30);
+
+    ctx.fillStyle = "#FFFFFF";
+    ctx.font = "bold 32px monospace";
+    ctx.textAlign = "center";
+    ctx.fillText("ANOTHER MEMORY?", canvas.width / 2, canvas.height / 3);
+
+    ctx.font = "16px monospace";
+    ctx.fillStyle = "#AAAAAA";
+    ctx.fillText("Press ENTER to Begin", canvas.width / 2, canvas.height / 1.5);
+    ctx.textAlign = "left"; // Reset defaults
+}
+
+function drawLoadPromptScreen() {
+    ctx.fillStyle = "#000055";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = "#FFFFFF";
+    ctx.strokeRect(15, 15, canvas.width - 30, canvas.height - 30);
+
+    ctx.fillStyle = "#FFFFFF";
+    ctx.font = "24px monospace";
+    ctx.textAlign = "center";
+    ctx.fillText("SELECT FILE", canvas.width / 2, canvas.height / 4);
+
+    ctx.font = "20px monospace";
+    ctx.textAlign = "left";
+    ctx.fillText("NEW GAME", canvas.width / 2 - 60, canvas.height / 2);
+    ctx.fillText("CONTINUE", canvas.width / 2 - 60, canvas.height / 2 + 40);
+
+    let cursorY = menuSelection === 0 ? canvas.height / 2 : canvas.height / 2 + 40;
+    ctx.fillText(">", canvas.width / 2 - 90, cursorY);
 }
 
 function drawMap() {
@@ -173,10 +280,13 @@ function drawOverworldUI() {
     ctx.fillStyle = "#FFF";
     ctx.font = "14px monospace";
     ctx.fillText(`HP: ${player.hp}/${player.maxHp} | GOLD: ${player.gold}`, 20, canvas.height - 15);
+    
+    ctx.textAlign = "right";
+    ctx.fillText("Press [S] to Save Progress", canvas.width - 20, canvas.height - 15);
+    ctx.textAlign = "left";
 }
 
 function drawBattleScreen() {
-    // Background Frame Window Box
     ctx.fillStyle = "#000033"; 
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.strokeStyle = "#FFF";
@@ -187,23 +297,19 @@ function drawBattleScreen() {
     ctx.font = "16px monospace";
 
     if (gameState === "BATTLE") {
-        // Render target metadata
         ctx.fillText(`ENEMY: ${currentMonster.name}`, 40, 50);
         ctx.fillText(`HP: ${Math.max(0, currentMonster.hp)} / ${currentMonster.maxHp}`, 40, 80);
 
-        // Render local player metadata
         ctx.fillText("PLAYER PARTY", 320, 50);
         ctx.fillText(`HP: ${player.hp} / ${player.maxHp}`, 320, 80);
 
-        // Dialogue Box UI Text 
+        // Text Dialogue box bounds
         ctx.fillStyle = "#111";
         ctx.fillRect(20, canvas.height - 140, canvas.width - 40, 120);
         ctx.strokeRect(20, canvas.height - 140, canvas.width - 40, 120);
         
         ctx.fillStyle = "#FFF";
         ctx.fillText(battleLog, 40, canvas.height - 100);
-
-        // Dynamic Interactive Menu Select Boxes
         ctx.fillText("FIGHT", 40, canvas.height - 50);
         ctx.fillText("RUN", 40, canvas.height - 25);
         
@@ -212,11 +318,11 @@ function drawBattleScreen() {
 
     } else if (gameState === "BATTLE_VICTORY") {
         ctx.textAlign = "center";
-        ctx.fillText("VICTORY ACHIEVEMENT UNSLOCKED", canvas.width / 2, canvas.height / 3);
+        ctx.fillText("VICTORY", canvas.width / 2, canvas.height / 3);
         ctx.fillText(battleLog, canvas.width / 2, canvas.height / 2);
         ctx.fillStyle = "#AAA";
         ctx.fillText("Press ENTER to return to Overworld", canvas.width / 2, canvas.height / 1.5);
-        ctx.textAlign = "left"; // Reset positioning rules 
+        ctx.textAlign = "left"; 
     } 
     
     else if (gameState === "GAME_OVER") {
@@ -225,10 +331,10 @@ function drawBattleScreen() {
         ctx.fillText("YOU DIED", canvas.width / 2, canvas.height / 3);
         ctx.fillStyle = "#FFF";
         ctx.fillText("Another memory fades into darkness...", canvas.width / 2, canvas.height / 2);
-        ctx.fillText("Press ENTER to revive at starting point", canvas.width / 2, canvas.height / 1.5);
+        ctx.fillText("Press ENTER to retry from start", canvas.width / 2, canvas.height / 1.5);
         ctx.textAlign = "left";
     }
 }
 
-// Fire engine thread loops
+// Fire the rendering loop engine
 gameLoop();

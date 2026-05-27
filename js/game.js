@@ -24,7 +24,7 @@ tileImage.src = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprite
 tileImage.onload = assetLoadedCallback;
 
 const heroBattleImage = new Image();
-heroBattleImage.src = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/versions/generation-i/red-blue/1.png"; // Hero sprite placeholder
+heroBattleImage.src = "image/marisa_kirisame__battlef.png"; // Hero sprite placeholder
 heroBattleImage.onload = assetLoadedCallback;
 
 const monsterImage = new Image();

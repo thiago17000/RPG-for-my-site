@@ -24,7 +24,7 @@ tileImage.src = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprite
 tileImage.onload = assetLoadedCallback;
 
 const heroBattleImage = new Image();
-heroBattleImage.src = "image/marisa_kirisame__battle.png"; // Classic Bulbasaur/Hero placeholder
+heroBattleImage.src = "image/marisa_kirisame__battlef.png"; // Classic Bulbasaur/Hero placeholder
 heroBattleImage.onload = assetLoadedCallback;
 
 const monsterImage = new Image();

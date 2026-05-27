@@ -2,19 +2,38 @@ const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 
 const TILE_SIZE = 32; 
-const MAP_VIEW_WIDTH = 512; // First 16 columns for the map rendering viewport
+const MAP_VIEW_WIDTH = 512; 
 
 // --- Engine State Machine ---
+// Global tracking states: TITLE_SCREEN, LOAD_PROMPT, OVERWORLD, BATTLE, BATTLE_VICTORY, GAME_OVER
 let gameState = "TITLE_SCREEN"; 
+let currentZone = "TOWN"; // Tracking maps: TOWN, HOUSE, STAIRS
+
 let menuSelection = 0;   
 let combatSelection = 0; 
 let battleLog = "Welcome to Town!";
 let currentMonster = null;
-let currentRoomText = ""; // Holds text when inside a house/room
+
+// --- Asset Image Loading Pipeline ---
+let assetsLoaded = 0;
+const totalAssets = 3;
+function assetLoadedCallback() { assetsLoaded++; }
+
+const tileImage = new Image();
+tileImage.src = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/poke-ball.png"; 
+tileImage.onload = assetLoadedCallback;
+
+const heroBattleImage = new Image();
+heroBattleImage.src = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/versions/generation-i/red-blue/1.png"; // Hero sprite placeholder
+heroBattleImage.onload = assetLoadedCallback;
+
+const monsterImage = new Image();
+monsterImage.src = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/versions/generation-i/red-blue/19.png"; // Enemy sprite placeholder
+monsterImage.onload = assetLoadedCallback;
 
 // --- Player Character Struct ---
 let player = {
-    x: 8, y: 12, // Start at the bottom center pathway entrance
+    x: 8, y: 12, 
     level: 1, hp: 30, maxHp: 30,
     attack: 8, defense: 2, speed: 5, gold: 40
 };
@@ -25,24 +44,46 @@ const monsters = [
     { name: "GOBLIN", hp: 18, maxHp: 18, attack: 7, defense: 2, speed: 4, goldReward: 25 }
 ];
 
-// --- Complex Town Map (16 columns x 14 rows) ---
-// 0=Grass, 1=Solid Wall, 2=Path, 3=House1, 4=House2, 5=House3, 6=House4, 7=Grand Staircase
-const map = [
-    [0,0,0,0,0,0,0,1,7,1,0,0,0,0,0,0], // Top wall containing Grand Staircase (7)
+// --- Map Databases ---
+// 0=Grass/Floor, 1=Solid Wall, 2=Path, 3=Door to House, 7=Grand Staircase, 8=Exit Zone Door
+const townMap = [
+    [0,0,0,0,0,0,0,1,7,1,0,0,0,0,0,0], 
     [1,1,1,1,1,1,1,1,2,1,1,1,1,1,1,1], 
-    [1,0,3,1,0,4,1,1,2,1,1,0,5,1,0,1], // Row with top houses (Door Triggers 3, 4, 5)
+    [1,0,3,1,0,3,1,1,2,1,1,0,3,1,0,1], 
     [1,0,2,1,0,2,1,1,2,1,1,0,2,1,0,1],
-    [1,0,2,2,2,2,2,2,2,2,2,2,2,1,0,1], // Crossroad brick pathways
+    [1,0,2,2,2,2,2,2,2,2,2,2,2,1,0,1], 
     [1,1,1,1,1,1,1,2,2,2,1,1,1,1,1,1],
-    [1,0,0,1,0,6,1,2,2,2,1,0,0,1,0,1], // Row with middle house (Door Trigger 6)
+    [1,0,0,1,0,3,1,2,2,2,1,0,0,1,0,1], 
     [1,0,0,1,0,2,1,2,2,2,1,0,0,1,0,1],
     [1,1,1,1,1,2,1,2,2,2,1,1,1,1,1,1],
     [1,0,0,0,1,2,1,2,2,2,1,0,0,0,0,1],
     [1,0,0,0,1,2,1,1,2,1,1,0,0,0,0,1],
     [1,1,1,1,1,2,2,2,2,2,2,1,1,1,1,1],
-    [0,0,0,0,1,1,1,1,2,1,1,1,0,0,0,0], // Southern entry point
+    [0,0,0,0,1,1,1,1,2,1,1,1,0,0,0,0], 
     [0,0,0,0,0,0,0,1,2,1,0,0,0,0,0,0]
 ];
+
+const houseInteriorMap = [
+    [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+    [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+    [1,0,1,1,1,0,0,1,1,1,0,0,1,1,0,1], // Shop counters
+    [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+    [1,1,1,1,1,1,1,0,8,0,1,1,1,1,1,1], // Bottom wall with Exit Tile (8)
+];
+
+const stairsBalconyMap = [
+    [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0], // Grand high balcony overlook
+    [1,1,1,1,1,1,1,0,8,0,1,1,1,1,1,1], // Exit back down (8)
+];
+
+// Return active map matrix configuration dynamically
+function getActiveMapGrid() {
+    if (currentZone === "TOWN") return townMap;
+    if (currentZone === "HOUSE") return houseInteriorMap;
+    if (currentZone === "STAIRS") return stairsBalconyMap;
+    return townMap;
+}
 
 // --- Input Processing System ---
 window.addEventListener("keydown", (e) => {
@@ -51,9 +92,7 @@ window.addEventListener("keydown", (e) => {
             if (localStorage.getItem("another_memory_save")) {
                 gameState = "LOAD_PROMPT";
                 menuSelection = 1; 
-            } else {
-                startNewGame();
-            }
+            } else { startNewGame(); }
         }
     } 
     else if (gameState === "LOAD_PROMPT") {
@@ -74,33 +113,40 @@ window.addEventListener("keydown", (e) => {
         if (e.key === "ArrowLeft") targetX--;
         if (e.key === "ArrowRight") targetX++;
 
-        // Ensure movement stays within left-side grid boundaries
-        if (targetY >= 0 && targetY < map.length && targetX >= 0 && targetX < MAP_VIEW_WIDTH / TILE_SIZE) {
-            let tileType = map[targetY][targetX];
+        let currentGrid = getActiveMapGrid();
 
-            if (tileType !== 1) { // If it's not a solid stone wall block
+        // Canvas Boundary Verification Rules
+        if (targetY >= 0 && targetY < currentGrid.length && targetX >= 0 && targetX < MAP_VIEW_WIDTH / TILE_SIZE) {
+            let tileType = currentGrid[targetY][targetX];
+
+            if (tileType !== 1) { // If it isn't solid geometry, perform move
                 player.x = targetX;
                 player.y = targetY;
 
-                // Handle Interactive Door Trigger Coordinates
-                if (tileType >= 3 && tileType <= 7) {
-                    processTrigger(tileType);
-                } else {
-                    // Normal tiles have a small chance of a random encounter outside of buildings
+                // --- Zone Trigger Processing ---
+                if (tileType === 3) { // Entering a House
+                    currentZone = "HOUSE";
+                    battleLog = "Entered house. Safe zone established.";
+                    player.x = 8; player.y = 3; // Center interior position
+                } 
+                else if (tileType === 7) { // Climbing Grand Stairs
+                    currentZone = "STAIRS";
+                    battleLog = "You ascended to the high castle walls!";
+                    player.x = 8; player.y = 1;
+                } 
+                else if (tileType === 8) { // Leaving an interior space back to Town
+                    currentZone = "TOWN";
+                    battleLog = "Returned to town overworld.";
+                    player.x = 8; player.y = 5; // Spawn onto path
+                } 
+                else {
+                    // Random encounters only occur out in the green town fields
                     checkRandomEncounter();
                 }
             }
         }
-
         if (e.key.toLowerCase() === "s") saveGame();
     } 
-    else if (gameState === "INSIDE_ROOM") {
-        if (e.key === "Enter" || e.key === "Escape") {
-            // Kick player safely outside the building door frame
-            player.y += 1; 
-            gameState = "OVERWORLD";
-        }
-    }
     else if (gameState === "BATTLE") {
         if (e.key === "ArrowUp" || e.key === "ArrowDown") {
             combatSelection = combatSelection === 0 ? 1 : 0;
@@ -112,47 +158,42 @@ window.addEventListener("keydown", (e) => {
     }
 });
 
-// --- Trigger Activation Interpreter ---
-function processTrigger(id) {
-    gameState = "INSIDE_ROOM";
-    if (id === 3) currentRoomText = "Entered Armor Shop! The merchant greets you warmly.";
-    if (id === 4) currentRoomText = "Entered Weapon Shop! Heavy iron blades line the walls.";
-    if (id === 5) currentRoomText = "Entered the Magic Sanctum. Crystals pulse with energy.";
-    if (id === 6) currentRoomText = "Entered the Village Inn. Your party rests comfortably.";
-    if (id === 7) currentRoomText = "You ascend the Grand Staircase... Leading to the Castle Overlook!";
-}
-
 // --- Save & Load Framework ---
 function saveGame() {
     try {
-        localStorage.setItem("another_memory_save", JSON.stringify(player));
-        battleLog = "Progress saved successfully!";
+        const savePackage = { player: player, zone: currentZone };
+        localStorage.setItem("another_memory_save", JSON.stringify(savePackage));
+        battleLog = "Progress written to local disk!";
     } catch (e) { console.error(e); }
 }
 
 function loadGame() {
     const savedData = localStorage.getItem("another_memory_save");
     if (savedData) {
-        player = JSON.parse(savedData);
+        const parsed = JSON.parse(savedData);
+        player = parsed.player;
+        currentZone = parsed.zone || "TOWN";
         gameState = "OVERWORLD";
-        battleLog = "Welcome back!";
+        battleLog = "File loaded successfully.";
     } else { startNewGame(); }
 }
 
 function startNewGame() {
     player = { x: 8, y: 12, level: 1, hp: 30, maxHp: 30, attack: 8, defense: 2, speed: 5, gold: 40 };
+    currentZone = "TOWN";
     gameState = "OVERWORLD";
     battleLog = "Welcome to Town!";
 }
 
 function checkRandomEncounter() {
-    // Only trigger battles on plain green grass (tile code 0)
-    if (map[player.y][player.x] === 0 && Math.random() < 0.08) { 
+    let currentGrid = getActiveMapGrid();
+    // Only trigger random encounters on green overworld grass (tile ID 0)
+    if (currentZone === "TOWN" && currentGrid[player.y][player.x] === 0 && Math.random() < 0.08) { 
         const randomMonsterTemplate = monsters[Math.floor(Math.random() * monsters.length)];
         currentMonster = { ...randomMonsterTemplate }; 
         gameState = "BATTLE";
         combatSelection = 0;
-        battleLog = `An enemy ${currentMonster.name} attacked inside the town perimeter!`;
+        battleLog = `An enemy ${currentMonster.name} attacked!`;
     }
 }
 
@@ -162,7 +203,7 @@ function executeCombatRound() {
         gameState = "OVERWORLD";
         return;
     }
-    // Calculate speed order
+    
     if (player.speed >= currentMonster.speed) {
         let dmg = Math.max(1, player.attack - currentMonster.defense);
         currentMonster.hp -= dmg;
@@ -170,7 +211,16 @@ function executeCombatRound() {
         if (currentMonster.hp > 0) {
             let mdmg = Math.max(1, currentMonster.attack - player.defense);
             player.hp -= mdmg;
-            battleLog += `It hits you back for ${mdmg}.`;
+            battleLog += `It hits you for ${mdmg}.`;
+        }
+    } else {
+        let mdmg = Math.max(1, currentMonster.attack - player.defense);
+        player.hp -= mdmg;
+        battleLog = `The ${currentMonster.name} hits you for ${mdmg}. `;
+        if (player.hp > 0) {
+            let dmg = Math.max(1, player.attack - currentMonster.defense);
+            currentMonster.hp -= dmg;
+            battleLog += `You counter strike for ${dmg}.`;
         }
     }
     
@@ -178,7 +228,7 @@ function executeCombatRound() {
     else if (currentMonster.hp <= 0) {
         player.gold += currentMonster.goldReward;
         gameState = "BATTLE_VICTORY";
-        battleLog = `Defeated ${currentMonster.name}! Won ${currentMonster.goldReward} Gold!`;
+        battleLog = `Defeated ${currentMonster.name}! Found ${currentMonster.goldReward} Gold!`;
     }
 }
 
@@ -186,15 +236,12 @@ function executeCombatRound() {
 function gameLoop() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    if (gameState === "TITLE_SCREEN") {
-        drawTitleScreen();
-    } else if (gameState === "LOAD_PROMPT") {
-        drawLoadPromptScreen();
-    } else if (gameState === "OVERWORLD" || gameState === "INSIDE_ROOM") {
-        drawTownMap();
-        drawPlayer();
+    if (gameState === "TITLE_SCREEN") drawTitleScreen();
+    else if (gameState === "LOAD_PROMPT") drawLoadPromptScreen();
+    else if (gameState === "OVERWORLD") {
+        drawActiveZoneMap();
+        drawPlayerSprite();
         drawRightBlueUI();
-        if (gameState === "INSIDE_ROOM") drawInsideRoomOverlay();
     } else {
         drawBattleScreen();
     }
@@ -231,31 +278,43 @@ function drawLoadPromptScreen() {
     ctx.textAlign = "left";
 }
 
-function drawTownMap() {
-    for (let r = 0; r < map.length; r++) {
-        for (let c = 0; c < map[r].length; c++) {
-            let tile = map[r][c];
-            if (tile === 1) ctx.fillStyle = "#7F8C8D"; // Stone Brick walls
-            else if (tile === 2) ctx.fillStyle = "#34495E"; // Clean stone streets
-            else if (tile >= 3 && tile <= 6) ctx.fillStyle = "#D35400"; // House wooden doors
-            else if (tile === 7) ctx.fillStyle = "#F1C40F"; // Grand Gold Staircase
-            else ctx.fillStyle = "#27AE60"; // Overworld green grass fields
+function drawActiveZoneMap() {
+    let currentGrid = getActiveMapGrid();
+    for (let r = 0; r < currentGrid.length; r++) {
+        for (let c = 0; c < currentGrid[r].length; c++) {
+            let tile = currentGrid[r][c];
+            
+            // Render rules mapped by Zone Type
+            if (tile === 1) ctx.fillStyle = "#7F8C8D"; // Dark brick border layout walls
+            else if (tile === 2) ctx.fillStyle = "#34495E"; // Main road pathing
+            else if (tile === 3) ctx.fillStyle = "#D35400"; // House Doorway teleporters
+            else if (tile === 7) ctx.fillStyle = "#F1C40F"; // Grand Gold Staircase teleporters
+            else if (tile === 8) ctx.fillStyle = "#9B59B6"; // Interior room exit square mats
+            else {
+                // Background layouts change style depending on your current location
+                if (currentZone === "TOWN") ctx.fillStyle = "#27AE60"; // Emerald overworld grass
+                else if (currentZone === "HOUSE") ctx.fillStyle = "#5C3A21"; // Inside cozy wood flooring
+                else ctx.fillStyle = "#111122"; // Balcony concrete stone flooring
+            }
 
             ctx.fillRect(c * TILE_SIZE, r * TILE_SIZE, TILE_SIZE, TILE_SIZE);
-            // Draw subtle black border lines around path tiles to mimic original art grids
-            ctx.strokeStyle = "rgba(0,0,0,0.15)";
+            ctx.strokeStyle = "rgba(0,0,0,0.12)";
             ctx.strokeRect(c * TILE_SIZE, r * TILE_SIZE, TILE_SIZE, TILE_SIZE);
         }
     }
 }
 
-function drawPlayer() {
-    ctx.fillStyle = "#E53935"; // Red Warrior block representation
-    ctx.fillRect(player.x * TILE_SIZE, player.y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+function drawPlayerSprite() {
+    if (assetsLoaded >= totalAssets) {
+        // Renders your active hero asset tile inside the map exploration view
+        ctx.drawImage(heroBattleImage, player.x * TILE_SIZE, player.y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+    } else {
+        ctx.fillStyle = "#E53935"; 
+        ctx.fillRect(player.x * TILE_SIZE, player.y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+    }
 }
 
 function drawRightBlueUI() {
-    // Left-side limit stops at 512px. The rest (512px to 768px) is our blue menu panel.
     ctx.fillStyle = "#000055";
     ctx.fillRect(MAP_VIEW_WIDTH, 0, canvas.width - MAP_VIEW_WIDTH, canvas.height);
     ctx.strokeStyle = "#FFFFFF";
@@ -267,60 +326,78 @@ function drawRightBlueUI() {
     ctx.fillText("STATUS WINDOW", MAP_VIEW_WIDTH + 24, 40);
     
     ctx.font = "14px monospace";
-    ctx.fillText(`LVL: ${player.level}`, MAP_VIEW_WIDTH + 24, 80);
-    ctx.fillText(`HP : ${player.hp}/${player.maxHp}`, MAP_VIEW_WIDTH + 24, 110);
-    ctx.fillText(`GOLD: ${player.gold}`, MAP_VIEW_WIDTH + 24, 140);
+    ctx.fillText(`ZONE: ${currentZone}`, MAP_VIEW_WIDTH + 24, 70);
+    ctx.fillText(`LVL : ${player.level}`, MAP_VIEW_WIDTH + 24, 100);
+    ctx.fillText(`HP  : ${player.hp}/${player.maxHp}`, MAP_VIEW_WIDTH + 24, 130);
+    ctx.fillText(`GOLD: ${player.gold}`, MAP_VIEW_WIDTH + 24, 160);
     
-    // Bottom log window area inside the right pane
     ctx.strokeRect(MAP_VIEW_WIDTH + 16, 200, canvas.width - MAP_VIEW_WIDTH - 32, 220);
     ctx.fillText("LOG:", MAP_VIEW_WIDTH + 24, 230);
     
-    // Wrap long text lines inside the sidebar panel safely
     ctx.font = "12px monospace";
     ctx.fillText(battleLog, MAP_VIEW_WIDTH + 24, 260, canvas.width - MAP_VIEW_WIDTH - 50);
-    
-    ctx.fillStyle = "#AAAAAA";
-    ctx.fillText("Press [S] to Save", MAP_VIEW_WIDTH + 24, 390);
-}
-
-function drawInsideRoomOverlay() {
-    // Pop up a centered modal dialog frame when inside a house room
-    ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
-    ctx.fillRect(40, 100, MAP_VIEW_WIDTH - 80, 200);
-    ctx.strokeStyle = "#FFFFFF";
-    ctx.strokeRect(40, 100, MAP_VIEW_WIDTH - 80, 200);
-
-    ctx.fillStyle = "#FFFFFF";
-    ctx.font = "14px monospace";
-    ctx.fillText(currentRoomText, 60, 160, MAP_VIEW_WIDTH - 120);
-    
-    ctx.fillStyle = "#F1C40F";
-    ctx.fillText("Press ENTER to leave the building", 60, 240);
 }
 
 function drawBattleScreen() {
     ctx.fillStyle = "#000033"; 
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.strokeStyle = "#FFF";
+    ctx.lineWidth = 4;
     ctx.strokeRect(10, 10, canvas.width - 20, canvas.height - 20);
 
     ctx.fillStyle = "#FFFFFF";
     ctx.font = "16px monospace";
-    ctx.fillText(`ENEMY: ${currentMonster.name} (HP: ${currentMonster.hp})`, 40, 60);
-    ctx.fillText(`PLAYER (HP: ${player.hp}/${player.maxHp})`, 40, 120);
 
-    ctx.fillStyle = "#111";
-    ctx.fillRect(20, canvas.height - 140, canvas.width - 40, 120);
-    ctx.strokeRect(20, canvas.height - 140, canvas.width - 40, 120);
-    
-    ctx.fillStyle = "#FFF";
-    ctx.fillText(battleLog, 40, canvas.height - 90);
-    ctx.fillText("FIGHT", 40, canvas.height - 50);
-    ctx.fillText("RUN", 40, canvas.height - 25);
-    
-    let cursorY = combatSelection === 0 ? canvas.height - 50 : canvas.height - 25;
-    ctx.fillText(">", 25, cursorY);
+    if (gameState === "BATTLE") {
+        // Left Column: Enemy Visual Rendering Viewport
+        if (assetsLoaded >= totalAssets) {
+            ctx.drawImage(monsterImage, 80, 100, 96, 96); 
+        } else {
+            ctx.fillStyle = "#FF00FF";
+            ctx.fillRect(80, 100, 64, 64);
+        }
+        ctx.fillText(`ENEMY: ${currentMonster.name}`, 40, 50);
+        ctx.fillText(`HP: ${Math.max(0, currentMonster.hp)} / ${currentMonster.maxHp}`, 40, 75);
+
+        // Right Column: Side-view Hero Combat Rendering Viewport
+        if (assetsLoaded >= totalAssets) {
+            ctx.drawImage(heroBattleImage, 360, 100, 96, 96);
+        } else {
+            ctx.fillStyle = "#00FFFF";
+            ctx.fillRect(360, 100, 64, 64);
+        }
+        ctx.fillText("PLAYER PARTY", 320, 50);
+        ctx.fillText(`HP: ${player.hp} / ${player.maxHp}`, 320, 75);
+
+        // Text Log Context Window Bounds
+        ctx.fillStyle = "#111";
+        ctx.fillRect(20, canvas.height - 140, canvas.width - 40, 120);
+        ctx.strokeRect(20, canvas.height - 140, canvas.width - 40, 120);
+        
+        ctx.fillStyle = "#FFF";
+        ctx.fillText(battleLog, 40, canvas.height - 100);
+        ctx.fillText("FIGHT", 40, canvas.height - 50);
+        ctx.fillText("RUN", 40, canvas.height - 25);
+        
+        let cursorY = combatSelection === 0 ? canvas.height - 50 : canvas.height - 25;
+        ctx.fillText(">", 25, cursorY);
+
+    } else if (gameState === "BATTLE_VICTORY") {
+        ctx.textAlign = "center";
+        ctx.fillText("VICTORY", canvas.width / 2, canvas.height / 3);
+        ctx.fillText(battleLog, canvas.width / 2, canvas.height / 2);
+        ctx.fillStyle = "#AAA";
+        ctx.fillText("Press ENTER to return to Overworld", canvas.width / 2, canvas.height / 1.5);
+        ctx.textAlign = "left"; 
+    } 
+    else if (gameState === "GAME_OVER") {
+        ctx.textAlign = "center";
+        ctx.fillStyle = "#D32F2F";
+        ctx.fillText("YOU DIED", canvas.width / 2, canvas.height / 3);
+        ctx.fillText("Press ENTER to retry from start", canvas.width / 2, canvas.height / 1.5);
+        ctx.textAlign = "left";
+    }
 }
 
-// Start town engine
+// Fire the loop
 gameLoop();
